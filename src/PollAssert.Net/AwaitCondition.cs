@@ -52,6 +52,14 @@ public sealed class AwaitCondition
     /// <param name="delay">The initial delay. Must not be negative.</param>
     /// <returns>This <see cref="AwaitCondition"/>, for chaining.</returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="delay"/> is negative.</exception>
+    /// <remarks>
+    /// If <paramref name="delay"/> is greater than the timeout passed to <see cref="Await.AtMost"/>,
+    /// the wait still performs exactly one evaluation once the initial delay elapses, so the
+    /// wall-clock time spent before throwing or returning can exceed the configured timeout.
+    /// This is intentional: "at most one evaluation is always attempted" outweighs the literal
+    /// timeout bound. Choose a delay no greater than the timeout if the timeout must be a hard
+    /// wall-clock ceiling.
+    /// </remarks>
     public AwaitCondition WithInitialDelay(TimeSpan delay)
     {
         if (delay < TimeSpan.Zero)
@@ -214,7 +222,11 @@ public sealed class AwaitCondition
     /// <see cref="Task.Delay(TimeSpan)"/>-style constructs, this never routes the resumption
     /// through the thread pool or any other Task-scheduling heuristic, so a synchronous
     /// <see cref="TimeProvider"/> (such as a test fake that fires due timers inline) resumes
-    /// the poll loop deterministically on the very thread that advanced the clock.
+    /// the poll loop deterministically on the very thread that advanced the clock. With
+    /// <see cref="TimeProvider.System"/>, the callback (and therefore the predicate and any
+    /// synchronous continuation of the awaited <c>Until</c> task) runs inline on a thread-pool
+    /// timer callback thread rather than being posted back to a captured synchronization
+    /// context; a long-blocking predicate blocks that callback thread for its duration.
     /// </summary>
     private readonly struct TimerAwaitable
     {
@@ -234,7 +246,6 @@ public sealed class AwaitCondition
     {
         private readonly TimeProvider _timeProvider;
         private readonly TimeSpan _delay;
-        private ITimer? _timer;
 
         internal TimerAwaiter(TimeSpan delay, TimeProvider timeProvider)
         {
@@ -244,7 +255,21 @@ public sealed class AwaitCondition
 
         public bool IsCompleted => false;
 
-        public void OnCompleted(Action continuation) => Schedule(continuation);
+        /// <summary>
+        /// Schedules <paramref name="continuation"/> to run when the delay elapses, flowing the
+        /// captured <see cref="ExecutionContext"/> as required by the <see cref="INotifyCompletion"/>
+        /// contract. The compiler-generated state machine always calls <see cref="UnsafeOnCompleted"/>
+        /// instead (this awaiter implements <see cref="ICriticalNotifyCompletion"/>), so this path is
+        /// only exercised by a caller awaiting the awaiter directly.
+        /// </summary>
+        public void OnCompleted(Action continuation)
+        {
+            ArgumentNullException.ThrowIfNull(continuation);
+            var capturedContext = ExecutionContext.Capture();
+            Schedule(capturedContext is null
+                ? continuation
+                : () => ExecutionContext.Run(capturedContext, static state => ((Action)state!)(), continuation));
+        }
 
         public void UnsafeOnCompleted(Action continuation) => Schedule(continuation);
 
@@ -254,15 +279,72 @@ public sealed class AwaitCondition
 
         private void Schedule(Action continuation)
         {
-            _timer = _timeProvider.CreateTimer(
-                _ =>
-                {
-                    _timer?.Dispose();
-                    continuation();
-                },
-                state: null,
+            var state = new TimerState(continuation);
+            var timer = _timeProvider.CreateTimer(
+                static timerState => ((TimerState)timerState!).Fire(),
+                state,
                 dueTime: _delay,
                 period: Timeout.InfiniteTimeSpan);
+            state.AttachTimer(timer);
+        }
+
+        /// <summary>
+        /// Carries the continuation and the eventual <see cref="ITimer"/> for a single scheduled
+        /// delay, and guarantees the timer is disposed exactly once regardless of whether the
+        /// timer callback fires before or after <see cref="AttachTimer"/> observes it. The timer
+        /// callback can legitimately run on another thread before <see cref="TimeProvider.CreateTimer"/>
+        /// has returned to the caller, so the handoff between "the timer object exists" and "the
+        /// callback fired" must not assume either ordering.
+        /// </summary>
+        private sealed class TimerState
+        {
+            private readonly Action _continuation;
+            private ITimer? _timer;
+
+            internal TimerState(Action continuation)
+            {
+                _continuation = continuation;
+            }
+
+            internal void AttachTimer(ITimer timer)
+            {
+                // If Fire() already ran, _timer holds the FiredSentinel and this attach is
+                // responsible for disposing the timer itself; otherwise Fire() (still to come)
+                // will observe the timer we store here and dispose it when it runs.
+                if (Interlocked.CompareExchange(ref _timer, timer, null) is not null)
+                {
+                    timer.Dispose();
+                }
+            }
+
+            internal void Fire()
+            {
+                var timer = Interlocked.Exchange(ref _timer, FiredSentinel.Instance);
+                timer?.Dispose();
+                _continuation();
+            }
+        }
+
+        /// <summary>
+        /// A no-op <see cref="ITimer"/> used purely as a non-null marker so that
+        /// <see cref="TimerState"/> can distinguish "no timer attached yet" (<see langword="null"/>)
+        /// from "the callback already fired" without a separate synchronization primitive.
+        /// </summary>
+        private sealed class FiredSentinel : ITimer
+        {
+            internal static readonly FiredSentinel Instance = new();
+
+            private FiredSentinel()
+            {
+            }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period) => false;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
     }
 
