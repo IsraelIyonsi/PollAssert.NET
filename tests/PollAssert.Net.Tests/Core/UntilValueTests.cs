@@ -32,8 +32,7 @@ public class UntilValueTests
 
         for (var i = 0; i < TargetValue - 1; i++)
         {
-            var expectedCounter = i + 2;
-            await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => counter >= expectedCounter);
+            provider.Advance(TimeSpan.FromSeconds(1));
         }
 
         var result = await task;
@@ -57,15 +56,14 @@ public class UntilValueTests
     public async Task UntilValue_ThrowsConditionTimeoutException_WhenMatcherNeverSucceeds()
     {
         var provider = new ManualTimeProvider();
-        var callCount = 0;
 
         var task = Await.AtMost(TimeSpan.FromSeconds(2))
             .PollInterval(TimeSpan.FromSeconds(1))
             .WithTimeProvider(provider)
-            .Until(() => { callCount++; return -1; }, static n => n == TargetValue);
+            .Until(static () => -1, static n => n == TargetValue);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount >= 2);
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount >= 3);
+        provider.Advance(TimeSpan.FromSeconds(1));
+        provider.Advance(TimeSpan.FromSeconds(1));
 
         await Assert.ThrowsAsync<ConditionTimeoutException>(() => task);
     }

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace PollAssert;
@@ -160,7 +161,7 @@ public sealed class AwaitCondition
 
         if (_initialDelay > TimeSpan.Zero)
         {
-            await DelayAsync(_initialDelay, _timeProvider).ConfigureAwait(false);
+            await DelayAsync(_initialDelay, _timeProvider);
         }
 
         var pollCount = 0;
@@ -200,26 +201,69 @@ public sealed class AwaitCondition
             var delay = remaining < _pollInterval ? remaining : _pollInterval;
             if (delay > TimeSpan.Zero)
             {
-                await DelayAsync(delay, _timeProvider).ConfigureAwait(false);
+                await DelayAsync(delay, _timeProvider);
             }
         }
     }
 
-    private static Task DelayAsync(TimeSpan delay, TimeProvider timeProvider)
-    {
-        var completionSource = new TaskCompletionSource();
-        ITimer? timer = null;
-        timer = timeProvider.CreateTimer(
-            _ =>
-            {
-                completionSource.TrySetResult();
-                timer?.Dispose();
-            },
-            state: null,
-            dueTime: delay,
-            period: Timeout.InfiniteTimeSpan);
+    private static TimerAwaitable DelayAsync(TimeSpan delay, TimeProvider timeProvider) => new(delay, timeProvider);
 
-        return completionSource.Task;
+    /// <summary>
+    /// A custom awaitable timer delay that invokes its continuation as a direct, synchronous
+    /// delegate call from the firing <see cref="ITimer"/> callback. Unlike awaiting
+    /// <see cref="Task.Delay(TimeSpan)"/>-style constructs, this never routes the resumption
+    /// through the thread pool or any other Task-scheduling heuristic, so a synchronous
+    /// <see cref="TimeProvider"/> (such as a test fake that fires due timers inline) resumes
+    /// the poll loop deterministically on the very thread that advanced the clock.
+    /// </summary>
+    private readonly struct TimerAwaitable
+    {
+        private readonly TimeSpan _delay;
+        private readonly TimeProvider _timeProvider;
+
+        internal TimerAwaitable(TimeSpan delay, TimeProvider timeProvider)
+        {
+            _delay = delay;
+            _timeProvider = timeProvider;
+        }
+
+        public TimerAwaiter GetAwaiter() => new(_delay, _timeProvider);
+    }
+
+    private sealed class TimerAwaiter : ICriticalNotifyCompletion
+    {
+        private readonly TimeProvider _timeProvider;
+        private readonly TimeSpan _delay;
+        private ITimer? _timer;
+
+        internal TimerAwaiter(TimeSpan delay, TimeProvider timeProvider)
+        {
+            _delay = delay;
+            _timeProvider = timeProvider;
+        }
+
+        public bool IsCompleted => false;
+
+        public void OnCompleted(Action continuation) => Schedule(continuation);
+
+        public void UnsafeOnCompleted(Action continuation) => Schedule(continuation);
+
+        public void GetResult()
+        {
+        }
+
+        private void Schedule(Action continuation)
+        {
+            _timer = _timeProvider.CreateTimer(
+                _ =>
+                {
+                    _timer?.Dispose();
+                    continuation();
+                },
+                state: null,
+                dueTime: _delay,
+                period: Timeout.InfiniteTimeSpan);
+        }
     }
 
     private static ConditionTimeoutException CreateTimeoutException<T>(

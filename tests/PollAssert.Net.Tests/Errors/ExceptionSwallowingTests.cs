@@ -25,8 +25,8 @@ public class ExceptionSwallowingTests
                 return true;
             });
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => attempts >= 2);
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => attempts >= 3);
+        provider.Advance(TimeSpan.FromSeconds(1));
+        provider.Advance(TimeSpan.FromSeconds(1));
 
         await task;
         Assert.Equal(3, attempts);
@@ -74,7 +74,7 @@ public class ExceptionSwallowingTests
                 return true;
             });
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => attempts >= 2);
+        provider.Advance(TimeSpan.FromSeconds(1));
 
         await task;
         Assert.Equal(2, attempts);

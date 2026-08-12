@@ -9,15 +9,14 @@ public class ConditionTimeoutExceptionMessageTests
     public async Task Timeout_IncludesLastObservedValueInMessage()
     {
         var provider = new ManualTimeProvider();
-        var callCount = 0;
 
         var task = Await.AtMost(TimeSpan.FromSeconds(1))
             .PollInterval(TimeSpan.FromMilliseconds(500))
             .WithTimeProvider(provider)
-            .Until(() => { callCount++; return 42; }, static n => n == 999);
+            .Until(static () => 42, static n => n == 999);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromMilliseconds(500), () => callCount >= 2);
-        await provider.AdvanceUntilAsync(TimeSpan.FromMilliseconds(500), () => callCount >= 3);
+        provider.Advance(TimeSpan.FromMilliseconds(500));
+        provider.Advance(TimeSpan.FromMilliseconds(500));
 
         var exception = await Assert.ThrowsAsync<ConditionTimeoutException>(() => task);
         Assert.Contains("Last observed value: 42", exception.Message);
@@ -29,15 +28,14 @@ public class ConditionTimeoutExceptionMessageTests
     {
         var provider = new ManualTimeProvider();
         var failure = new InvalidOperationException("not ready yet");
-        var callCount = 0;
 
         var task = Await.AtMost(TimeSpan.FromSeconds(1))
             .PollInterval(TimeSpan.FromMilliseconds(500))
             .WithTimeProvider(provider)
-            .Until(bool () => { callCount++; throw failure; });
+            .Until(bool () => throw failure);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromMilliseconds(500), () => callCount >= 2);
-        await provider.AdvanceUntilAsync(TimeSpan.FromMilliseconds(500), () => callCount >= 3);
+        provider.Advance(TimeSpan.FromMilliseconds(500));
+        provider.Advance(TimeSpan.FromMilliseconds(500));
 
         var exception = await Assert.ThrowsAsync<ConditionTimeoutException>(() => task);
         Assert.Same(failure, exception.InnerException);
@@ -65,16 +63,15 @@ public class ConditionTimeoutExceptionMessageTests
     public async Task Timeout_MessageStatesWaitedDurationAndPollCount()
     {
         var provider = new ManualTimeProvider();
-        var callCount = 0;
 
         var task = Await.AtMost(TimeSpan.FromMilliseconds(300))
             .PollInterval(TimeSpan.FromMilliseconds(100))
             .WithTimeProvider(provider)
-            .Until(() => { callCount++; return false; });
+            .Until(static () => false);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromMilliseconds(100), () => callCount >= 2);
-        await provider.AdvanceUntilAsync(TimeSpan.FromMilliseconds(100), () => callCount >= 3);
-        await provider.AdvanceUntilAsync(TimeSpan.FromMilliseconds(100), () => callCount >= 4);
+        provider.Advance(TimeSpan.FromMilliseconds(100));
+        provider.Advance(TimeSpan.FromMilliseconds(100));
+        provider.Advance(TimeSpan.FromMilliseconds(100));
 
         var exception = await Assert.ThrowsAsync<ConditionTimeoutException>(() => task);
         Assert.StartsWith("Condition was not met within 300 ms after 4 polls.", exception.Message);

@@ -51,7 +51,7 @@ public class TimeoutBoundaryTests
 
         Assert.Equal(1, callCount);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount == 2);
+        provider.Advance(TimeSpan.FromSeconds(1));
 
         await task;
         Assert.Equal(2, callCount);

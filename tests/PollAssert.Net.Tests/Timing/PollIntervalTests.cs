@@ -22,13 +22,13 @@ public class PollIntervalTests
 
         Assert.Equal(1, callCount);
 
-        await provider.AdvanceAndSettleBrieflyAsync(TimeSpan.FromSeconds(1));
+        provider.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(1, callCount);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount >= 2);
+        provider.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(2, callCount);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(2), () => callCount >= 3);
+        provider.Advance(TimeSpan.FromSeconds(2));
         Assert.Equal(3, callCount);
 
         await task;
@@ -50,10 +50,10 @@ public class PollIntervalTests
 
         Assert.Equal(1, callCount);
 
-        await provider.AdvanceAndSettleBrieflyAsync(TimeSpan.FromMilliseconds(99));
+        provider.Advance(TimeSpan.FromMilliseconds(99));
         Assert.Equal(1, callCount);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromMilliseconds(1), () => callCount == 2);
+        provider.Advance(TimeSpan.FromMilliseconds(1));
         Assert.Equal(2, callCount);
 
         await task;
@@ -74,9 +74,9 @@ public class PollIntervalTests
                 return false;
             });
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(2), () => callCount >= 2);
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(2), () => callCount >= 3);
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount >= 4);
+        provider.Advance(TimeSpan.FromSeconds(2));
+        provider.Advance(TimeSpan.FromSeconds(2));
+        provider.Advance(TimeSpan.FromSeconds(1));
 
         var exception = await Assert.ThrowsAsync<ConditionTimeoutException>(() => task);
         Assert.Equal(4, callCount);

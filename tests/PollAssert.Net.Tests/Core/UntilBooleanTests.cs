@@ -36,8 +36,7 @@ public class UntilBooleanTests
 
         for (var i = 0; i < ExpectedSuccessfulPollCount - 1; i++)
         {
-            var expectedCallCount = i + 2;
-            await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount >= expectedCallCount);
+            provider.Advance(TimeSpan.FromSeconds(1));
         }
 
         await task;
@@ -73,16 +72,15 @@ public class UntilBooleanTests
     public async Task Until_ThrowsConditionTimeoutException_WhenConditionNeverBecomesTrue()
     {
         var provider = new ManualTimeProvider();
-        var callCount = 0;
 
         var task = Await.AtMost(TimeSpan.FromSeconds(3))
             .PollInterval(TimeSpan.FromSeconds(1))
             .WithTimeProvider(provider)
-            .Until(() => { callCount++; return false; });
+            .Until(static () => false);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount >= 2);
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount >= 3);
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount >= 4);
+        provider.Advance(TimeSpan.FromSeconds(1));
+        provider.Advance(TimeSpan.FromSeconds(1));
+        provider.Advance(TimeSpan.FromSeconds(1));
 
         await Assert.ThrowsAsync<ConditionTimeoutException>(() => task);
     }

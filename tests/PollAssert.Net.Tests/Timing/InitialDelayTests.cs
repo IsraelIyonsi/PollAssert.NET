@@ -22,10 +22,10 @@ public class InitialDelayTests
 
         Assert.Equal(0, callCount);
 
-        await provider.AdvanceAndSettleBrieflyAsync(TimeSpan.FromSeconds(2));
+        provider.Advance(TimeSpan.FromSeconds(2));
         Assert.Equal(0, callCount);
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(1), () => callCount == 1);
+        provider.Advance(TimeSpan.FromSeconds(1));
         await task;
         Assert.Equal(1, callCount);
     }
@@ -45,7 +45,7 @@ public class InitialDelayTests
                 return true;
             });
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(5), () => callCount == 1);
+        provider.Advance(TimeSpan.FromSeconds(5));
 
         await task;
         Assert.Equal(1, callCount);
@@ -66,7 +66,7 @@ public class InitialDelayTests
                 return false;
             });
 
-        await provider.AdvanceUntilAsync(TimeSpan.FromSeconds(5), () => callCount == 1);
+        provider.Advance(TimeSpan.FromSeconds(5));
 
         var exception = await Assert.ThrowsAsync<ConditionTimeoutException>(() => task);
         Assert.Equal(1, callCount);
