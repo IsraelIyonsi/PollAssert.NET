@@ -41,6 +41,39 @@ int finalCount = await Await.AtMost(TimeSpan.FromSeconds(3))
 
 The value-probing overload returns the value that satisfied the matcher, so a test can both wait for a condition and assert on the result it produced in one call.
 
+### Poll an assertion (Awaitility `untilAsserted`)
+
+Pass an assertion instead of a boolean predicate and let your existing assertion library do the checking. The assertion runs on every poll; if it throws, the poll is treated as "not yet satisfied" and the wait retries; if it returns normally, the wait succeeds. When the timeout elapses before the assertion passes, the exception from the most recent attempt is rethrown with its original type, message and stack trace preserved, so you see the real xUnit or FluentAssertions failure with its full diff, not a generic timeout:
+
+```csharp
+using PollAssert;
+using Xunit;
+
+await Await.AtMost(TimeSpan.FromSeconds(5))
+    .PollInterval(TimeSpan.FromMilliseconds(100))
+    .Until(() =>
+    {
+        var order = repository.GetLatestOrder();
+        Assert.Equal("Shipped", order.Status);
+        Assert.Equal(3, order.Items.Count);
+    });
+// If the order never ships, the wait rethrows the last Assert.Equal failure,
+// with its expected/actual diff, rather than a ConditionTimeoutException.
+```
+
+An asynchronous `Func<Task>` assertion is supported too and is awaited on each poll:
+
+```csharp
+await Await.AtMost(TimeSpan.FromSeconds(10))
+    .Until(async () =>
+    {
+        var response = await httpClient.GetAsync("/health");
+        response.EnsureSuccessStatusCode();
+    });
+```
+
+By design, an assertion overload catches every exception the assertion throws while polling, so it does not consult `IgnoreExceptions`. The last failure is always the one surfaced on timeout.
+
 ### A not-yet-ready call should not fail the wait early
 
 By default, an exception thrown while evaluating the condition is swallowed and treated as "not ready yet"; the wait keeps retrying until the timeout instead of failing on the first flaky read.
@@ -103,6 +136,7 @@ Condition was not met within 5000 ms after 3 polls. Last poll threw InvalidOpera
 | `.WithTimeProvider(TimeProvider timeProvider)` | Injects the clock; defaults to `TimeProvider.System` |
 | `.IgnoreExceptions(bool ignoreExceptions = true)` | Swallow-and-retry predicate exceptions; enabled by default |
 | `.Until(Func<bool>)` / `.Until(Func<Task<bool>>)` | Poll a predicate until it returns `true` |
+| `.Until(Action)` / `.Until(Func<Task>)` | Poll an assertion until it passes; on timeout rethrow the last assertion failure (Awaitility `untilAsserted`) |
 | `.Until<T>(Func<T>, Func<T, bool>)` / `.Until<T>(Func<Task<T>>, Func<T, bool>)` | Poll a value until it matches, returning the matching value |
 
 Correctness the library specifically guarantees:

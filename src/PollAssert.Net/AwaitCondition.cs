@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text;
 
 namespace PollAssert;
@@ -130,6 +131,70 @@ public sealed class AwaitCondition
     }
 
     /// <summary>
+    /// Polls the given synchronous assertion until it completes without throwing, or the
+    /// timeout elapses. This mirrors Awaitility's <c>untilAsserted</c>: the assertion runs
+    /// on every poll; if it throws (an exception of any type), that poll is treated as "not
+    /// yet satisfied" and the wait retries after the poll interval; if it returns normally,
+    /// the wait succeeds. When the timeout elapses before the assertion passes, the exception
+    /// thrown by the most recent assertion attempt is rethrown with its original type, message
+    /// and stack trace preserved, so the caller sees the real assertion failure (for example an
+    /// xUnit or FluentAssertions error, with its rich diff) rather than a generic
+    /// <see cref="ConditionTimeoutException"/>.
+    /// </summary>
+    /// <param name="assertion">
+    /// The assertion to run on each poll. It signals "satisfied" by returning normally and
+    /// "not yet satisfied" by throwing.
+    /// </param>
+    /// <returns>A task that completes once the assertion passes.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="assertion"/> is null.</exception>
+    /// <remarks>
+    /// Every exception the assertion throws is captured and swallowed while polling, by design,
+    /// so this overload intentionally does not consult <see cref="IgnoreExceptions(bool)"/>. If
+    /// the assertion never passes within the timeout, the last captured exception is rethrown.
+    /// In the degenerate case where no assertion attempt was ever completed before the timeout,
+    /// the generic <see cref="ConditionTimeoutException"/> is thrown instead.
+    /// </remarks>
+    public Task Until(Action assertion)
+    {
+        ArgumentNullException.ThrowIfNull(assertion);
+        return UntilAssertedAsync(() =>
+        {
+            assertion();
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Polls the given asynchronous assertion until it completes without throwing, or the
+    /// timeout elapses. This mirrors Awaitility's <c>untilAsserted</c>: the assertion is awaited
+    /// on every poll; if it throws (an exception of any type), that poll is treated as "not yet
+    /// satisfied" and the wait retries after the poll interval; if it completes normally, the
+    /// wait succeeds. When the timeout elapses before the assertion passes, the exception thrown
+    /// by the most recent assertion attempt is rethrown with its original type, message and stack
+    /// trace preserved, so the caller sees the real assertion failure (for example an xUnit or
+    /// FluentAssertions error, with its rich diff) rather than a generic
+    /// <see cref="ConditionTimeoutException"/>.
+    /// </summary>
+    /// <param name="assertion">
+    /// The asynchronous assertion to run on each poll. It signals "satisfied" by completing
+    /// normally and "not yet satisfied" by throwing.
+    /// </param>
+    /// <returns>A task that completes once the assertion passes.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="assertion"/> is null.</exception>
+    /// <remarks>
+    /// Every exception the assertion throws is captured and swallowed while polling, by design,
+    /// so this overload intentionally does not consult <see cref="IgnoreExceptions(bool)"/>. If
+    /// the assertion never passes within the timeout, the last captured exception is rethrown.
+    /// In the degenerate case where no assertion attempt was ever completed before the timeout,
+    /// the generic <see cref="ConditionTimeoutException"/> is thrown instead.
+    /// </remarks>
+    public Task Until(Func<Task> assertion)
+    {
+        ArgumentNullException.ThrowIfNull(assertion);
+        return UntilAssertedAsync(assertion);
+    }
+
+    /// <summary>
     /// Polls the given synchronous value provider until the produced value
     /// satisfies <paramref name="matcher"/>, or the timeout elapses.
     /// </summary>
@@ -161,6 +226,38 @@ public sealed class AwaitCondition
         ArgumentNullException.ThrowIfNull(valueProvider);
         ArgumentNullException.ThrowIfNull(matcher);
         return await RunAsync(valueProvider, matcher).ConfigureAwait(false);
+    }
+
+    private async Task UntilAssertedAsync(Func<Task> assertion)
+    {
+        const bool AssertionSatisfied = true;
+        const bool AssertionNotYetSatisfied = false;
+
+        ExceptionDispatchInfo? lastAssertionFailure = null;
+
+        async Task<bool> ProbeAsync()
+        {
+            try
+            {
+                await assertion().ConfigureAwait(false);
+                lastAssertionFailure = null;
+                return AssertionSatisfied;
+            }
+            catch (Exception assertionException)
+            {
+                lastAssertionFailure = ExceptionDispatchInfo.Capture(assertionException);
+                return AssertionNotYetSatisfied;
+            }
+        }
+
+        try
+        {
+            await RunAsync(ProbeAsync, static satisfied => satisfied).ConfigureAwait(false);
+        }
+        catch (ConditionTimeoutException) when (lastAssertionFailure is not null)
+        {
+            lastAssertionFailure.Throw();
+        }
     }
 
     private async Task<T> RunAsync<T>(Func<Task<T>> probe, Func<T, bool> matcher)

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-21
+
+### Added
+
+- `Until(Action)` and `Until(Func<Task>)` assertion overloads, mirroring Awaitility's `untilAsserted`: the assertion runs on every poll, any exception it throws is treated as "not yet satisfied" and retried, and on timeout the exception from the most recent assertion attempt is rethrown with its original type, message, and stack trace preserved (via `ExceptionDispatchInfo`), so callers see the real xUnit or FluentAssertions failure with its diff rather than a generic `ConditionTimeoutException`.
+- By design, the assertion overloads catch every exception the assertion throws while polling and do not consult `IgnoreExceptions`. If the timeout elapses before any assertion attempt completes, the generic `ConditionTimeoutException` is thrown instead.
+
 ## [0.1.0] - 2026-08-12
 
 ### Added
